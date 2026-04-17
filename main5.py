@@ -14,7 +14,7 @@ from rich.panel import Panel
 SEU_USUARIO = "fbueno"
 SUA_SENHA = "310710"
 CONTRATO_ALVO = "002/2021-52"
-CSV_DESPESAS = "gggg.csv"  
+CSV_DESPESAS = "rubricas.csv"  
 SESSION_FILE = "session_osinfo.json"
 
 # Configuração do Período Alvo
@@ -23,7 +23,7 @@ MES_DATA_VALUE = "2" # 0=Janeiro, 1=Fevereiro, etc.
 NOME_MES_PASTA = "Março" 
 
 # Organização de Pastas
-BASE_Z = r"Z:\PRESTAÇÃO DE CONTAS OS\OSINFO_DESPESAS_DOWNLOADS"
+BASE_Z = r"E:\PRESTAÇÃO DE CONTAS OS\OSINFO_DESPESAS_DOWNLOADS"
 CAMINHO_FINAL = os.path.join(BASE_Z, f"{NOME_MES_PASTA}_{ANO_ALVO}")
 CAMINHO_TEMPORARIO = r"C:\temp_osinfo_stage"
 
@@ -46,7 +46,7 @@ async def automate_osinfo():
         return
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, slow_mo=200)
+        browser = await p.chromium.launch(headless=False, slow_mo=200)
         
         # Gestão de Sessão
         if os.path.exists(SESSION_FILE):
