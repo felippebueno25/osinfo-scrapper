@@ -17,8 +17,8 @@ SESSION_FILE = "session_osinfo.json"
 
 # Configuração do Período Alvo
 ANO_ALVO = "2026"
-MES_DATA_VALUE = "2"      # 0=Janeiro, 1=Fevereiro, 2=Março ...
-NOME_MES_PASTA = "Março"
+MES_DATA_VALUE = "3"      # 0=Janeiro, 1=Fevereiro, 2=Março, 3=Abril, ..., 11=Dezembro
+NOME_MES_PASTA = "Abril"
 
 # Organização de Pastas
 BASE_Z = r"E:\PRESTAÇÃO DE CONTAS OS\OSINFO_DESPESAS_DOWNLOADS"
@@ -67,7 +67,7 @@ async def automate_osinfo():
         return
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=200)
+        browser = await p.chromium.launch(headless=True, slow_mo=200)
 
         # Gestão de Sessão
         ctx_kwargs = dict(accept_downloads=True, viewport={"width": 1920, "height": 1080})

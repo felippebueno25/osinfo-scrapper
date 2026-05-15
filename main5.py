@@ -19,7 +19,7 @@ SESSION_FILE = "session_osinfo.json"
 
 # Configuração do Período Alvo
 ANO_ALVO = "2026"
-MES_DATA_VALUE = "2" # 0=Janeiro, 1=Fevereiro, etc.
+MES_DATA_VALUE = "4" # 0=Janeiro, 1=Fevereiro, etc.
 NOME_MES_PASTA = "Março" 
 
 # Organização de Pastas
