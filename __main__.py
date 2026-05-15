@@ -176,11 +176,16 @@ async def automate_osinfo():
                     progress.update(task, advance=1, description=f"[grey50]Pulo: {nome_final[:20]}[/grey50]")
                 else:
                     try:
-                        await link.click()
-                        await page.wait_for_selector("#documentViewDownloadButton", state="visible", timeout=15000)
+                        # 1. Clique BRUTO via JavaScript (ignora a lentidão do DOM pesado)
+                        await link.evaluate("el => el.click()")
                         
-                        async with page.expect_download(timeout=30000) as dl_info:
-                            await page.click("#documentViewDownloadButton")
+                        # 2. Timeout curto: Se o modal não abrir em 8s, o link tá quebrado
+                        await page.wait_for_selector("#documentViewDownloadButton", state="visible", timeout=8000)
+                        
+                        # 3. Timeout restrito pro download
+                        async with page.expect_download(timeout=15000) as dl_info:
+                            # Clica no botão de download
+                            await page.evaluate("document.querySelector('#documentViewDownloadButton').click()")
                         
                         download = await dl_info.value
                         path_local = os.path.join(CAMINHO_TEMPORARIO, nome_final)
@@ -190,15 +195,27 @@ async def automate_osinfo():
                         arquivos_existentes.add(nome_final)
                         progress.update(task, advance=1, description=f"[green]Baixado: {nome_final[:20]}[/green]")
                         
-                        await page.click("#documentViewBackButton")
-                        await page.wait_for_selector("#documentView", state="hidden")
-                    except Exception as e:
-                        progress.update(task, advance=1, description=f"[red]Erro em: {nome_final[:20]}[/red]")
-                        await page.keyboard.press("Escape")
-                        await asyncio.sleep(1) # Dá um respiro pro DOM se recuperar
+                        # Fecha o modal suavemente
+                        await page.evaluate("document.querySelector('#documentViewBackButton')?.click()")
+                        await page.wait_for_selector("#documentView", state="hidden", timeout=5000)
 
-                # Salva o checkpoint no item atual (salvamos idx+2 porque idx começa em 0, e queremos o PRÓXIMO)
+                    except Exception as e:
+                        # SE DER ERRO OU TRAVAR, ELE CAI AQUI!
+                        progress.update(task, advance=1, description=f"[red]Pulou Erro: {nome_final[:15]}[/red]")
+                        
+                        # Procedimento agressivo de limpeza de tela para não travar o próximo
+                        try:
+                            await page.evaluate("document.querySelector('#documentViewBackButton')?.click()")
+                            await page.keyboard.press("Escape")
+                            await page.wait_for_selector("#documentView", state="hidden", timeout=3000)
+                        except:
+                            pass # Se não fechar, engole o erro e segue em frente
+                        
+                        await asyncio.sleep(1) # Micro-pausa pro DOM respirar
+
+                # Salva o checkpoint no item atual
                 salvar_checkpoint(idx + 2, ano_alvo, mes_data_value, rubrica_filtro)
+
 
         console.print(f"\n[bold green]🏁 Processo concluído para {nome_mes_pasta}![/bold green]")
         await browser.close()
