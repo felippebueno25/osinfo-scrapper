@@ -10,14 +10,15 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from rich.panel import Panel
 
 # === CONFIGURAÇÕES ===
-SEU_USUARIO = "fbueno"
-SUA_SENHA = "310710"
-CONTRATO_ALVO = "002/2021-52"
+SEU_USUARIO = os.getenv("SEU_USUARIO", "")
+SUA_SENHA = os.getenv("SUA_SENHA", "")
+CONTRATO_ALVO = os.getenv("CONTRATO_ALVO", "")
+
 SESSION_FILE = "session_osinfo.json"
 CHECKPOINT_FILE = "checkpoint.json"
 
 # Organização de Pastas
-BASE_Z = r"E:\PRESTAÇÃO DE CONTAS OS\OSINFO_DESPESAS_DOWNLOADS"
+BASE_Z = r"C:\Users\CAP52\Downloads\codigo\sei-scrapper\osinfo-scrapper\OSINFO_DESPESAS_DOWNLOADS"
 CAMINHO_TEMPORARIO = r"C:\temp_osinfo_stage"
 
 console = Console()
