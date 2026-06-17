@@ -5,11 +5,15 @@ import re
 from datetime import datetime
 
 from playwright.async_api import async_playwright
-from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+
+MESES_PT = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+]
 
 SEU_USUARIO = os.getenv("SEU_USUARIO", "")
 SUA_SENHA = os.getenv("SUA_SENHA", "")
+
 CONTRATO_ALVO = "002/2021-52"
 
 SESSION_FILE = "session_osinfo.json"
@@ -44,12 +48,12 @@ MAPEAMENTO_GERAL = [
     (r"ANEXO\s*II\b", ANEXOII),
     (r"ANEXO\s*X\b", ANEXOX),
     (r"ANEXO\s*I\b", ANEXOI),
-    (r"CERTID[OÕ]ES\b", CERTIDOES),
-    (r"DECLARA[CÇ][OÕ]ES\b", DECLARACOES),
-    (r"RHOS_RH_PROVISAO\b", RHOS_RH_PROVISAO),
-    (r"DESP_FIXAS\b", DESP_FIXAS),
+    (r"CERTID[OÕ]ES", CERTIDOES),
+    (r"DECLARA[CÇ][OÕ]ES", DECLARACOES),
+    (r"RHOS_RH_PROVISAO", RHOS_RH_PROVISAO),
+    (r"DESP_FIXAS", DESP_FIXAS),
     (r"GUIAPAGAMENTO", GUIAPAGAMENTO),
-    (r"BLOCO\s*E\b", BLOCOE),
+    (r"BLOCO\s*E", BLOCOE),
 ]
 
 TERMOS_ARQUIVOS = [
@@ -69,19 +73,10 @@ FILTRO_ANO = 'input.columnSearch[id="4"]'
 FILTRO_CONTRATO = 'input.columnSearch[id="7"]'
 FILTRO_ARQUIVO = 'input.columnSearch[id="17"]'
 
-console = Console()
-
-MESES_PT = [
-    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
-]
-
-
 def sanitizar_nome(texto: str) -> str:
     if texto.lower().endswith(".pdf"):
         texto = texto[:-4]
     return "".join(c for c in texto.strip() if c.isalnum() or c in (" ", "_", "-")).strip()
-
 
 def descobrir_pasta_destino(nome_arquivo: str, pasta_padrao: str, ano: str, mes: str) -> str:
     nome_upper = nome_arquivo.upper()
@@ -101,7 +96,8 @@ def descobrir_pasta_destino(nome_arquivo: str, pasta_padrao: str, ano: str, mes:
     return pasta_padrao
 
 
-async def preparar_contexto(page, ano_alvo: str, mes_data_value: str, contrato_alvo: str) -> None:
+async def preparar_contexto(page, ano_alvo: str, mes_data_value: str, contrato_alvo: str, log_callback) -> None:
+    log_callback("Acessando portal da OSINFO...")
     await page.goto("https://osinfo.prefeitura.rio/pages/application-container.html")
 
     try:
@@ -109,12 +105,13 @@ async def preparar_contexto(page, ano_alvo: str, mes_data_value: str, contrato_a
     except Exception:
         pass
 
+    log_callback("Navegando pelos menus...")
     await page.click('a[href="#SubMenu2"]')
     await page.click('a[href="#SubSubMenu3"]')
     await page.wait_for_selector("#CtrTerce", state="visible")
     await page.click("#CtrTerce")
 
-    console.print(f"[bold blue]⏳ Configurando filtros para {ano_alvo}/{mes_data_value}, Contrato: {contrato_alvo}[/bold blue]")
+    log_callback(f"Configurando filtros: Ano {ano_alvo}, Mês {mes_data_value}, Contrato {contrato_alvo}...")
     await page.click(BOTAO_FILTROS)
 
     mes_locator = page.locator(FILTRO_MES).first
@@ -133,8 +130,8 @@ async def preparar_contexto(page, ano_alvo: str, mes_data_value: str, contrato_a
     await asyncio.sleep(2)
 
 
-async def carregar_todos_os_registros(page) -> None:
-    console.print("[bold yellow]🚀 Solicitando TODOS os registros ao servidor (-1)...[/bold yellow]")
+async def carregar_todos_os_registros(page, log_callback) -> None:
+    log_callback("Solicitando carga massiva de registros ao servidor...")
     seletor_quantidade = f'select[name="{TABELA_CONTRATOS}_length"]'
 
     await page.evaluate(
@@ -150,14 +147,14 @@ async def carregar_todos_os_registros(page) -> None:
 
     try:
         await page.wait_for_selector(f"#{TABELA_CONTRATOS}_processing", state="hidden", timeout=180000)
-        console.print("[bold green]✅ Lista carregada com sucesso![/bold green]")
+        log_callback("Lista carregada com sucesso.")
     except Exception:
-        console.print("[red]⚠️ Timeout esperando a lista massiva. Continuando mesmo assim...[/red]")
+        log_callback("Aviso: Timeout esperando a lista. Continuando mesmo assim...")
 
     await asyncio.sleep(3)
 
 
-async def baixar_termo(page, termo: str, caminho_base: str, ano_alvo: str, mes_alvo: str) -> None:
+async def baixar_termo(page, termo: str, caminho_base: str, ano_alvo: str, mes_alvo: str, log_callback) -> None:
     pasta_padrao_termo = os.path.join(caminho_base, termo)
     campo_arquivo = page.locator(FILTRO_ARQUIVO).first
 
@@ -168,93 +165,85 @@ async def baixar_termo(page, termo: str, caminho_base: str, ano_alvo: str, mes_a
         await campo_arquivo.fill(termo)
         await campo_arquivo.press("Enter")
     else:
-        console.print(f"[red]Campo de busca não encontrado para {termo}.[/red]")
+        log_callback(f"ERRO: Campo de busca não encontrado para {termo}.")
         return
 
     await page.wait_for_selector(f"#{TABELA_CONTRATOS}_processing", state="hidden", timeout=30000)
     await asyncio.sleep(2)
-    await carregar_todos_os_registros(page)
+    
+    await carregar_todos_os_registros(page, log_callback)
 
     links = await page.query_selector_all('a[onclick*="showSelectedDocument"]')
     total_links = len(links)
     
     if total_links == 0:
-        console.print(f"[bold yellow]Nenhum arquivo encontrado para {termo}.[/bold yellow]")
+        log_callback(f"\n[Termo: {termo}] - Nenhum arquivo encontrado.")
         return
 
-    item_inicio = 1
-    console.print(f"\n[bold cyan]📊 {termo}: {total_links} itens. Processando...[/bold cyan]")
+    log_callback(f"\n[Termo: {termo}] - {total_links} itens encontrados. Processando...")
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), console=console) as progress:
-        task = progress.add_task(f"[cyan]Baixando {termo}", total=total_links)
-        progress.update(task, completed=item_inicio - 1)
+    for idx in range(total_links):
+        link = links[idx]
+        texto = (await link.inner_text()).strip()
+        nome_final = f"{sanitizar_nome(texto)}.pdf"
 
-        for idx in range(item_inicio - 1, total_links):
-            link = links[idx]
-            texto = (await link.inner_text()).strip()
-            nome_final = f"{sanitizar_nome(texto)}.pdf"
+        pasta_destino = descobrir_pasta_destino(nome_final, pasta_padrao_termo, ano_alvo, mes_alvo)
+        caminho_final_arquivo = os.path.join(pasta_destino, nome_final)
 
-            pasta_destino = descobrir_pasta_destino(nome_final, pasta_padrao_termo, ano_alvo, mes_alvo)
-            caminho_final_arquivo = os.path.join(pasta_destino, nome_final)
-
-            if os.path.exists(caminho_final_arquivo):
-                progress.update(task, advance=1, description=f"[grey50]Já existe: {nome_final[:20]}[/grey50]")
-            else:
+        if os.path.exists(caminho_final_arquivo):
+            log_callback(f"  ⏭ Pulo: {nome_final[:40]} (Já existe)")
+        else:
+            try:
                 try:
-                    console.print(f"[dim]⚡ [1/4] Disparando clique: {nome_final[:15]}...[/dim]")
-                    try:
-                        await link.click(force=True, timeout=5000)
-                    except:
-                        await page.evaluate("(el) => el.click()", link)
+                    await link.click(force=True, timeout=5000)
+                except:
+                    await page.evaluate("(el) => el.click()", link)
 
-                    console.print(f"[dim]⚡ [2/4] Caçando iframe do PDF...[/dim]")
-                    pdf_locator = page.locator("iframe, embed").last
-                    await pdf_locator.wait_for(state="attached", timeout=15000)
-                    await asyncio.sleep(2)
+                pdf_locator = page.locator("iframe, embed").last
+                await pdf_locator.wait_for(state="attached", timeout=15000)
+                await asyncio.sleep(2)
 
-                    console.print("[dim]🔧 [3/4] Extraindo URL...[/dim]")
-                    pdf_src = await pdf_locator.get_attribute("src")
-                    if not pdf_src:
-                        raise RuntimeError("Link src vazio no iframe.")
+                pdf_src = await pdf_locator.get_attribute("src")
+                if not pdf_src:
+                    raise RuntimeError("Link src vazio no iframe.")
 
-                    path_local = os.path.join(CAMINHO_TEMPORARIO, nome_final)
+                path_local = os.path.join(CAMINHO_TEMPORARIO, nome_final)
 
-                    console.print("[dim]⬇️ [4/4] Download via Fetch...[/dim]")
-                    async with page.expect_download(timeout=30000) as dl_info:
-                        await page.evaluate("""async ([url, filename]) => {
-                            const response = await fetch(url);
-                            const blob = await response.blob();
-                            const a = document.createElement('a');
-                            a.href = URL.createObjectURL(blob);
-                            a.download = filename;
-                            document.body.appendChild(a);
-                            a.click();
-                            a.remove();
-                        }""", [pdf_src, nome_final])
+                async with page.expect_download(timeout=30000) as dl_info:
+                    await page.evaluate("""async ([url, filename]) => {
+                        const response = await fetch(url);
+                        const blob = await response.blob();
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                    }""", [pdf_src, nome_final])
 
-                    download = await dl_info.value
-                    await download.save_as(path_local)
+                download = await dl_info.value
+                await download.save_as(path_local)
 
-                    shutil.move(path_local, caminho_final_arquivo)
-                    progress.update(task, advance=1, description=f"[green]Baixado: {nome_final[:20]}[/green]")
+                shutil.move(path_local, caminho_final_arquivo)
+                
+                # Feedback visual de sucesso
+                log_callback(f"  ✅ Baixado: {nome_final[:40]}")
 
-                    try:
-                        await page.evaluate("document.querySelector('button[class*=\"close\"], button[id*=\"back\"], button[id*=\"Back\"]')?.click()")
-                        await page.keyboard.press("Escape")
-                        await asyncio.sleep(1)
-                    except:
-                        pass
-
-                except Exception as e:
-                    console.print(f"[bold red]❌ Erro: {str(e)}[/bold red]")
-                    progress.update(task, advance=1, description=f"[red]Falha: {nome_final[:15]}[/red]")
+                try:
+                    await page.evaluate("document.querySelector('button[class*=\"close\"], button[id*=\"back\"], button[id*=\"Back\"]')?.click()")
                     await page.keyboard.press("Escape")
                     await asyncio.sleep(1)
+                except:
+                    pass
+
+            except Exception as e:
+                # Feedback visual de erro
+                log_callback(f"  ❌ Erro: Falha ao baixar {nome_final[:30]} ({str(e)})")
+                await page.keyboard.press("Escape")
+                await asyncio.sleep(1)
 
 
-async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: str):
-    contrato_alvo = CONTRATO_ALVO
-    
+async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: str, contrato_alvo: str, log_callback):
     # Caminho fallback (rede) para documentos não mapeados
     BASE_Z_FALLBACK = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\OUTROS"
     caminho_final = os.path.join(BASE_Z_FALLBACK, f"{nome_mes_pasta}_{ano_alvo}")
@@ -262,6 +251,7 @@ async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: st
     os.makedirs(caminho_final, exist_ok=True)
     os.makedirs(CAMINHO_TEMPORARIO, exist_ok=True)
 
+    log_callback("Iniciando navegador Playwright...")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False)
 
@@ -271,17 +261,15 @@ async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: st
         }
         if os.path.exists(SESSION_FILE):
             ctx_args["storage_state"] = SESSION_FILE
-            console.print("[green]✅ Estado de sessão carregado.[/green]")
+            log_callback("Estado de sessão anterior carregado.")
 
         context = await browser.new_context(**ctx_args)
         page = await context.new_page()
         page.set_default_timeout(60000)
 
-        await preparar_contexto(page, ano_alvo, mes_data_value, contrato_alvo)
+        await preparar_contexto(page, ano_alvo, mes_data_value, contrato_alvo, log_callback)
 
         for termo in TERMOS_ARQUIVOS:
-            console.print(f"\n[bold magenta]🔎 Buscando arquivos com o termo {termo}...[/bold magenta]")
-            await baixar_termo(page, termo, caminho_final, ano_alvo, mes_data_value)
+            await baixar_termo(page, termo, caminho_final, ano_alvo, mes_data_value, log_callback)
 
-        console.print(f"\n[bold green]🏁 Processo concluído para {nome_mes_pasta}![/bold green]")
         await browser.close()
