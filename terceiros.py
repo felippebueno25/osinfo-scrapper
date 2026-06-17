@@ -1,6 +1,7 @@
 import asyncio
 import os
 import shutil
+import re
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +17,48 @@ SESSION_FILE = "session_osinfo.json"
 
 BASE_Z = r"C:\Users\CAP52\Downloads\codigo\sei-scrapper\osinfo-scrapper\OSINFO_CONTRATOS_TERCEIROS_DOWNLOADS"
 CAMINHO_TEMPORARIO = r"C:\temp_osinfo_stage"
+
+# Caminhos Base dos Anexos
+ANEXOI = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\ANEXOS\DESPESAS COMPROMISSADAS - [ANEXO I]"
+ANEXOII = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\ANEXOS\DESPESAS VENCIDAS E NÃO PAGAS [ANEXO II]"
+ANEXOIII = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\ANEXOS\DESPESAS PAGAS - [ANEXO III]"
+ANEXOIV_IVI = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\ANEXOS\DEMONSTRATIVO FINANCEIRO ENTRE CONTRATOS OSINFO [ANEXO IV e IVI]"
+ANEXOV_VI = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\ANEXOS\DESPESAS RATEADAS OSINFO [ANEXO V e VI]"
+ANEXOVII = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\ANEXOS\DESPESA DE PESSOAL E PRV- [ANEXO VII]"
+ANEXOIX = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\ANEXOS\DECLARAÇÃO DE ATENDIMENTO A LGPD [ANEXO IX]"
+ANEXOX = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\ANEXOS\DECLARAÇÃO ATENDIMENTO CODESP- IN05-2025 [ANEXO X]"
+
+# --- NOVOS CAMINHOS ---
+CERTIDOES = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\CERTIDOES"
+DECLARACOES = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\DECLARAÇÕES"
+RHOS_RH_PROVISAO = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\DEMONSTRATIVO DE PESSOAL CONTRATADO PELA O.S. [RHOS_RH_PROVISAO]"
+DESP_FIXAS = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\DESPESAS FIXAS"
+GUIAPAGAMENTO = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\GUIA PGMT PISO ENFERMAGEM"
+BLOCOE = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\OSINFO - DOCUMENTOS\CONTRATOS DE TERCEIROS\RELATORIO DE ATIVIDADES [BLOCO E]"
+
+# --- REGEX MAPEADO (Substitua a variável MAPEAMENTO_ANEXOS por esta) ---
+MAPEAMENTO_GERAL = [
+    # 1. Combos de Anexos
+    (r"ANEXO\s*IV\s*E\s*IVI\b", ANEXOIV_IVI),
+    (r"ANEXO\s*V\s*E\s*VI\b", ANEXOV_VI),
+    # 2. Anexos Isolados
+    (r"ANEXO\s*III\b", ANEXOIII),
+    (r"ANEXO\s*VII\b", ANEXOVII),
+    (r"ANEXO\s*IX\b", ANEXOIX),
+    (r"ANEXO\s*VI\b", ANEXOV_VI),
+    (r"ANEXO\s*IV\b", ANEXOIV_IVI),
+    (r"ANEXO\s*V\b", ANEXOV_VI),
+    (r"ANEXO\s*II\b", ANEXOII),
+    (r"ANEXO\s*X\b", ANEXOX),
+    (r"ANEXO\s*I\b", ANEXOI),
+    # 3. Novos Documentos
+    (r"CERTID[OÕ]ES\b", CERTIDOES),
+    (r"DECLARA[CÇ][OÕ]ES\b", DECLARACOES),
+    (r"RHOS_RH_PROVISAO\b", RHOS_RH_PROVISAO),
+    (r"DESP_FIXAS\b", DESP_FIXAS),
+    (r"GUIAPAGAMENTO\b", GUIAPAGAMENTO),
+    (r"BLOCO\s*E\b", BLOCOE),
+]
 
 TERMOS_ARQUIVOS = [
     "ANEXO",
@@ -43,20 +86,24 @@ MESES_PT = [
 
 
 def sanitizar_nome(texto: str) -> str:
+    # Se o texto já trouxer a extensão, removemos para evitar duplicação ou quebra de Regex
+    if texto.lower().endswith(".pdf"):
+        texto = texto[:-4]
+        
     return "".join(c for c in texto.strip() if c.isalnum() or c in (" ", "_", "-")).strip()
 
 
 def solicitar_periodo() -> tuple[str, str, str]:
     ano_atual = datetime.now().year
     while True:
-        mes_input = input("Mês para baixar (1-12) [4]: ").strip() or "4"
+        mes_input = input("Mês para baixar (1-12): [{}]".format(datetime.now().month - 1)).strip() or str(datetime.now().month - 1)
         if mes_input.isdigit() and 1 <= int(mes_input) <= 12:
             mes_num = int(mes_input)
             break
         console.print("[red]Mês inválido.[/red]")
 
     while True:
-        ano_input = input("Ano para baixar [2026]: ").strip() or "2026"
+        ano_input = input("Ano para baixar [{}]: ".format(ano_atual)) or str(ano_atual)
         if ano_input.isdigit() and 2000 <= int(ano_input) <= ano_atual + 1:
             ano = ano_input
             break
@@ -64,6 +111,25 @@ def solicitar_periodo() -> tuple[str, str, str]:
 
     return ano, str(mes_num), MESES_PT[mes_num - 1]
 
+
+def descobrir_pasta_destino(nome_arquivo: str, pasta_padrao: str, ano: str, mes: str) -> str:
+    """Verifica o nome, cruza com o regex e aloca na subpasta do ano (ou ano/mês)."""
+    nome_upper = nome_arquivo.upper()
+    mes_formatado = str(mes).zfill(2) # Transforma "1" em "01"
+
+    for padrao, caminho_base in MAPEAMENTO_GERAL:
+        if re.search(padrao, nome_upper):
+            # Regra de Exceção para GUIAPAGAMENTO
+            if caminho_base == GUIAPAGAMENTO:
+                caminho_final = os.path.join(caminho_base, ano, mes_formatado)
+            else:
+                caminho_final = os.path.join(caminho_base, ano)
+            
+            os.makedirs(caminho_final, exist_ok=True)
+            return caminho_final
+            
+    os.makedirs(pasta_padrao, exist_ok=True)
+    return pasta_padrao
 
 async def preparar_contexto(page, ano_alvo: str, mes_data_value: str, contrato_alvo: str) -> None:
     await page.goto("https://osinfo.prefeitura.rio/pages/application-container.html")
@@ -93,7 +159,6 @@ async def preparar_contexto(page, ano_alvo: str, mes_data_value: str, contrato_a
         await contrato_locator.fill(contrato_alvo)
 
     await page.keyboard.press("Enter")
-
     await page.wait_for_selector(f"#{TABELA_CONTRATOS}_processing", state="hidden", timeout=30000)
     await asyncio.sleep(2)
 
@@ -122,11 +187,9 @@ async def carregar_todos_os_registros(page) -> None:
     await asyncio.sleep(3)
 
 
-async def baixar_termo(page, termo: str, caminho_base: str) -> None:
-    pasta_termo = os.path.join(caminho_base, termo)
-    os.makedirs(pasta_termo, exist_ok=True)
+async def baixar_termo(page, termo: str, caminho_base: str, ano_alvo: str, mes_alvo: str) -> None:
+    pasta_padrao_termo = os.path.join(caminho_base, termo)
 
-    arquivos_existentes = {f for f in os.listdir(pasta_termo) if f.lower().endswith(".pdf")}
     campo_arquivo = page.locator(FILTRO_ARQUIVO).first
 
     if await campo_arquivo.count() and not await campo_arquivo.is_visible():
@@ -145,6 +208,7 @@ async def baixar_termo(page, termo: str, caminho_base: str) -> None:
 
     links = await page.query_selector_all('a[onclick*="showSelectedDocument"]')
     total_links = len(links)
+    
     if total_links == 0:
         console.print(f"[bold yellow]Nenhum arquivo encontrado para {termo}.[/bold yellow]")
         return
@@ -161,13 +225,16 @@ async def baixar_termo(page, termo: str, caminho_base: str) -> None:
             texto = (await link.inner_text()).strip()
             nome_final = f"{sanitizar_nome(texto)}.pdf"
 
-            if nome_final in arquivos_existentes:
-                progress.update(task, advance=1, description=f"[grey50]Pulo: {nome_final[:20]}[/grey50]")
+            pasta_destino = descobrir_pasta_destino(nome_final, pasta_padrao_termo, ano_alvo, mes_alvo)
+            caminho_final_arquivo = os.path.join(pasta_destino, nome_final)
+
+            # Nova verificação: Logs claros sobre o status
+            if os.path.exists(caminho_final_arquivo):
+                progress.update(task, advance=1, description=f"[grey50]Já existe no disco: {nome_final[:20]}[/grey50]")
             else:
                 try:
                     console.print(f"[dim]⚡ [1/4] Disparando clique no arquivo: {nome_final[:15]}...[/dim]")
                     
-                    # Vamos forçar o clique nativo do Playwright. Se falhar, tentamos o via JS.
                     try:
                         await link.click(force=True, timeout=5000)
                     except:
@@ -175,24 +242,20 @@ async def baixar_termo(page, termo: str, caminho_base: str) -> None:
 
                     console.print(f"[dim]⚡ [2/4] Caçando o iframe/embed do PDF no DOM...[/dim]")
                     
-                    # A MÁGICA AQUI: Não dependemos mais do "#documentView".
-                    # Pegamos o último iframe ou embed que aparecer na página.
                     pdf_locator = page.locator("iframe, embed").last
-                    
-                    # Aguarda a tag existir no HTML, mesmo que invisível
                     await pdf_locator.wait_for(state="attached", timeout=15000)
-                    await asyncio.sleep(2)  # Tempo vital para o navegador preencher o atributo 'src'
+                    await asyncio.sleep(2)
 
                     console.print("[dim]🔧 [3/4] Extraindo URL de origem...[/dim]")
                     
                     pdf_src = await pdf_locator.get_attribute("src")
 
                     if not pdf_src:
-                        raise RuntimeError("O visualizador foi encontrado, mas o link (src) estava vazio.")
+                        raise RuntimeError("Link src vazio no iframe.")
 
                     path_local = os.path.join(CAMINHO_TEMPORARIO, nome_final)
 
-                    console.print("[dim]⬇️ [4/4] Executando download silencioso via Fetch...[/dim]")
+                    console.print("[dim]⬇️ [4/4] Executando download...[/dim]")
                     async with page.expect_download(timeout=30000) as dl_info:
                         await page.evaluate("""async ([url, filename]) => {
                             const response = await fetch(url);
@@ -208,12 +271,10 @@ async def baixar_termo(page, termo: str, caminho_base: str) -> None:
                     download = await dl_info.value
                     await download.save_as(path_local)
 
-                    shutil.move(path_local, os.path.join(pasta_termo, nome_final))
+                    shutil.move(path_local, caminho_final_arquivo)
 
-                    arquivos_existentes.add(nome_final)
-                    progress.update(task, advance=1, description=f"[green]Baixado: {nome_final[:20]}[/green]")
+                    progress.update(task, advance=1, description=f"[green]Baixado com sucesso: {nome_final[:20]}[/green]")
 
-                    # Tentativa genérica de fechar o modal pressionando 'Esc' ou clicando fora
                     try:
                         await page.evaluate("document.querySelector('button[class*=\"close\"], button[id*=\"back\"], button[id*=\"Back\"]')?.click()")
                         await page.keyboard.press("Escape")
@@ -222,8 +283,8 @@ async def baixar_termo(page, termo: str, caminho_base: str) -> None:
                         pass
 
                 except Exception as e:
-                    console.print(f"[bold red]❌ Erro: {str(e)}[/bold red]")
-                    progress.update(task, advance=1, description=f"[red]Pulou: {nome_final[:15]}[/red]")
+                    console.print(f"[bold red]❌ Erro interno: {str(e)}[/bold red]")
+                    progress.update(task, advance=1, description=f"[red]Falha ao baixar: {nome_final[:15]}[/red]")
                     await page.keyboard.press("Escape")
                     await asyncio.sleep(1)
 
@@ -231,6 +292,8 @@ async def baixar_termo(page, termo: str, caminho_base: str) -> None:
 async def automate_osinfo():
     ano_alvo, mes_data_value, nome_mes_pasta = solicitar_periodo()
     contrato_alvo = CONTRATO_ALVO
+    
+    # Define a pasta raiz de downloads não mapeados pelo Regex
     caminho_final = os.path.join(BASE_Z, f"{nome_mes_pasta}_{ano_alvo}")
 
     os.makedirs(caminho_final, exist_ok=True)
@@ -255,7 +318,8 @@ async def automate_osinfo():
 
         for termo in TERMOS_ARQUIVOS:
             console.print(f"\n[bold magenta]🔎 Buscando arquivos com o termo {termo}...[/bold magenta]")
-            await baixar_termo(page, termo, caminho_final)
+            # O parâmetro ano_alvo é passado aqui para o roteador saber construir a subpasta
+            await baixar_termo(page, termo, caminho_final, ano_alvo, mes_data_value)
 
         console.print(f"\n[bold green]🏁 Processo concluído para {nome_mes_pasta}![/bold green]")
         await browser.close()
