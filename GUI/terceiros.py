@@ -259,13 +259,19 @@ async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: st
     # --- NOVO BLOCO: Instalação Automática do Chromium (CORRIGIDO) ---
     log_callback("Verificando motor do navegador (Playwright)...")
     try:
-        # Acessa os binários internos do Playwright diretamente, evitando o loop do .exe
+        # 1. DEFINE O CAMINHO GLOBAL PARA O NAVEGADOR
+        # Isso tira o Playwright da pasta "_internal" e aponta para o cache real do Windows
+        caminho_navegadores = os.path.join(os.path.expanduser("~"), "AppData", "Local", "ms-playwright")
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = caminho_navegadores
+
+        # 2. CONFIGURA O INSTALADOR
         driver_executable, driver_cli = compute_driver_executable()
         env = get_driver_env()
-        
-        # Flag exclusiva do Windows para impedir travamentos no modo --noconsole
+        env["PLAYWRIGHT_BROWSERS_PATH"] = caminho_navegadores # Avisa o instalador onde salvar
+
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
+        # 3. RODA A INSTALAÇÃO
         subprocess.check_call(
             [driver_executable, driver_cli, "install", "chromium"],
             env=env,
@@ -276,12 +282,10 @@ async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: st
         )
         log_callback("Motor do navegador pronto.")
     except Exception as e:
-        log_callback(f"Aviso: Houve uma falha ao verificar/instalar o motor: {e}")
-        log_callback("O robô tentará rodar mesmo assim, mas pode falhar se for a primeira vez neste PC.")
-    
-    
+        log_callback(f"Aviso: Houve uma falha ao verificar/instalar o motor: {e}")    
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
+        browser = await p.chromium.launch(headless=True)
 
         ctx_args = {
             "accept_downloads": True,
