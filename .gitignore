@@ -1,7 +1,21 @@
-OSINFO_DESPESAS_DOWNLOADS
+# Downloads e saídas de automação
+OSINFO_DESPESAS_DOWNLOADS/
+OSINFO_DOWNLOADS_GERAL/
+OSINFO_CONTRATOS_TERCEIROS_DOWNLOADS/
+
+# Dados de sessão e credenciais sensíveis
 session_osinfo.json
-.venv
+**/session_osinfo.json
 .env
+**/.env
 checkpoint.json
-OSINFO_CONTRATOS_TERCEIROS_DOWNLOADS
-GUI
+
+# Ambiente Virtual Python e compilação do PyInstaller
+.venv/
+build/
+dist/
+**/build/
+**/dist/
+__pycache__/
+**/__pycache__/
+*.pyc
