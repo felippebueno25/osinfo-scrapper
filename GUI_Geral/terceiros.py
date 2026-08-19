@@ -5,6 +5,7 @@ import re
 import csv
 import sys
 import subprocess
+import uuid
 from datetime import datetime
 
 from playwright._impl._driver import compute_driver_executable, get_driver_env
@@ -403,6 +404,10 @@ async def baixar_todos_arquivos_unicos(page, ano_alvo: str, mes_data_value: str,
     log_callback(f"📄 Relação de arquivos únicos salva em '{path_csv_unicos}'.\n")
 
     # 8. Download Sequencial dos Arquivos Únicos
+    # Subpasta única por execução no temp para evitar colisões entre execuções
+    temp_run_dir = os.path.join(CAMINHO_TEMPORARIO, uuid.uuid4().hex)
+    os.makedirs(temp_run_dir, exist_ok=True)
+
     for idx, u in enumerate(itens_unicos, 1):
         nome_pdf = u["nome_pdf"]
         link = u["link"]
@@ -431,7 +436,7 @@ async def baixar_todos_arquivos_unicos(page, ano_alvo: str, mes_data_value: str,
                 if not pdf_src:
                     raise RuntimeError("Link src vazio no iframe do documento.")
 
-                path_local = os.path.join(CAMINHO_TEMPORARIO, nome_pdf)
+                path_local = os.path.join(temp_run_dir, nome_pdf)
 
                 async with page.expect_download(timeout=60000) as dl_info:
                     await page.evaluate("""async ([url, filename]) => {
@@ -474,6 +479,10 @@ def obter_caminho_session() -> str:
 
 
 async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: str, contrato_alvo: str, log_callback, headless: bool = True):
+    # Limpa o diretório temporário antes de cada execução para evitar
+    # que arquivos de execuções anteriores causem movimentação errada
+    if os.path.exists(CAMINHO_TEMPORARIO):
+        shutil.rmtree(CAMINHO_TEMPORARIO, ignore_errors=True)
     os.makedirs(CAMINHO_TEMPORARIO, exist_ok=True)
 
     log_callback("Verificando motor do navegador (Playwright)...")
