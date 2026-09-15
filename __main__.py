@@ -12,7 +12,7 @@ from rich.panel import Panel
 # === CONFIGURAÇÕES ===
 SEU_USUARIO = os.getenv("SEU_USUARIO", "")
 SUA_SENHA = os.getenv("SUA_SENHA", "")
-CONTRATO_ALVO = os.getenv("CONTRATO_ALVO", "")
+CONTRATO_ALVO = "002/2021-52"
 
 SESSION_FILE = "session_osinfo.json"
 CHECKPOINT_FILE = "checkpoint.json"
@@ -81,7 +81,7 @@ async def automate_osinfo():
     checkpoint = carregar_checkpoint(ano_alvo, mes_data_value, rubrica_filtro)
     
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=False)
         
         ctx_args = {
             "accept_downloads": True,
@@ -121,7 +121,7 @@ async def automate_osinfo():
             await page.fill("#descricaoDespesa", rubrica_filtro)
         await page.keyboard.press("Enter")
         
-        await page.wait_for_selector("#expensesTable_processing", state="hidden", timeout=30000)
+        await page.wait_for_selector("#expensesTable_processing", state="hidden", timeout=180000)
         await asyncio.sleep(2)
 
         # --- O GOLPE MESTRE: MOSTRAR TODOS ---
@@ -146,7 +146,7 @@ async def automate_osinfo():
         except Exception:
             console.print("[red]⚠️ Timeout esperando a lista massiva. O servidor pode ter engasgado, mas vamos tentar continuar...[/red]")
 
-        await asyncio.sleep(3) # Tempo extra pro DOM renderizar os milhares de nós HTML
+        await asyncio.sleep(30) # Tempo extra pro DOM renderizar os milhares de nós HTML
 
         # --- LOOP ÚNICO E CONTÍNUO ---
         links = await page.query_selector_all('a[onclick*="showSelectedDocument"]')
