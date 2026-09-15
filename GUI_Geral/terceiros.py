@@ -29,9 +29,13 @@ CONTRATO_ALVO = os.getenv("CONTRATO_ALVO", "002/2021-52")
 SESSION_FILE = "session_osinfo.json"
 CAMINHO_TEMPORARIO = r"C:\temp_osinfo_stage"
 
-# Se a estrutura do autor existir usa ela, caso contrário usa a pasta atual do executável
+# Pasta oficial de destino na rede / disco
+PASTA_OFICIAL_PADRAO = r"Z:\PRESTAÇÃO DE CONTAS OS\VIVA RIO\CONTRATOS DE TERCEIROS\CONTRATOS - AP 5.2\CONTRATOS NO OSINFO"
+
 CAMINHO_AUTOR = r"C:\Users\CAP52\Downloads\codigo\sei-scrapper\osinfo-scrapper\OSINFO_DOWNLOADS_GERAL"
-if os.path.exists(r"C:\Users\CAP52\Downloads\codigo\sei-scrapper\osinfo-scrapper"):
+if os.path.exists(PASTA_OFICIAL_PADRAO):
+    BASE_DOWNLOADS_GERAL = PASTA_OFICIAL_PADRAO
+elif os.path.exists(r"C:\Users\CAP52\Downloads\codigo\sei-scrapper\osinfo-scrapper"):
     BASE_DOWNLOADS_GERAL = CAMINHO_AUTOR
 else:
     BASE_DOWNLOADS_GERAL = os.path.join(os.getcwd(), "OSINFO_DOWNLOADS_GERAL")
@@ -45,7 +49,7 @@ FILTRO_ARQUIVO = 'input.columnSearch[id="17"]'
 
 
 def sanitizar_nome(texto: str) -> str:
-    """Sanitiza strings removendo caracteres inválidos no sistema de arquivos do Windows."""
+    """Sanitiza strings para nomes de pastas, removendo caracteres inválidos no Windows."""
     if not texto:
         return ""
     if texto.lower().endswith(".pdf"):
@@ -54,6 +58,44 @@ def sanitizar_nome(texto: str) -> str:
     sanitizado = re.sub(r'[<>:"|?*]', "", texto).strip()
     sanitizado = re.sub(r'\s+', " ", sanitizado)
     return sanitizado
+
+
+def sanitizar_nome_arquivo_original(texto: str, fallback: str = "documento.pdf") -> str:
+    """Sanitiza o nome original do arquivo preservando a extensão .pdf e removendo caracteres proibidos."""
+    if not texto:
+        return fallback
+    texto = texto.strip().replace("/", "-").replace("\\", "-").replace(":", "-")
+    sanitizado = re.sub(r'[<>"|?*]', "", texto).strip()
+    sanitizado = re.sub(r'\s+', " ", sanitizado)
+    if not sanitizado or sanitizado.lower() == ".pdf":
+        return fallback
+    if not sanitizado.lower().endswith(".pdf"):
+        sanitizado = f"{sanitizado}.pdf"
+    return sanitizado
+
+
+def obter_pasta_mes(pasta_base: str, ano_alvo: str, mes_data_value: str, nome_mes_pasta: str = "") -> str:
+    """Localiza ou constrói a pasta do mês no padrão 'XX. Mês Ano' (ex: '08. Agosto 2026') sob pasta_base/ano."""
+    pasta_ano = os.path.join(pasta_base, str(ano_alvo))
+    mes_2d = str(mes_data_value).zfill(2)
+    prefixo_mes = f"{mes_2d}."
+
+    if os.path.exists(pasta_ano):
+        try:
+            for item in os.listdir(pasta_ano):
+                caminho_item = os.path.join(pasta_ano, item)
+                if os.path.isdir(caminho_item) and item.strip().startswith(prefixo_mes):
+                    return caminho_item
+        except Exception:
+            pass
+
+    if not nome_mes_pasta:
+        mes_idx = int(mes_data_value) - 1
+        nome_mes_pasta = MESES_PT[mes_idx] if 0 <= mes_idx < len(MESES_PT) else mes_2d
+
+    nome_pasta_mes = f"{mes_2d}. {nome_mes_pasta} {ano_alvo}"
+    return os.path.join(pasta_ano, nome_pasta_mes)
+
 
 
 async def preparar_contexto(page, ano_alvo: str, mes_data_value: str, contrato_alvo: str, log_callback) -> None:
@@ -71,50 +113,91 @@ async def preparar_contexto(page, ano_alvo: str, mes_data_value: str, contrato_a
     await page.wait_for_selector("#CtrTerce", state="visible", timeout=60000)
     await page.click("#CtrTerce")
 
+    # Aguarda a tabela estar pronta antes de interagir com o calendário
+    await asyncio.sleep(2)
+
     log_callback(f"Configurando filtros: Ano {ano_alvo}, Mês {mes_data_value}, Contrato {contrato_alvo}...")
 
-    # 1. Filtro de Calendário Superior (#monthlySupplierContract)
-    mes_idx = int(mes_data_value) - 1 # 0-indexed: 0=Janeiro, 6=Julho
+    # 1. Calendário Superior (#monthlySupplierContract)
+    # NOTA: O portal carrega com o mês/ano da sessão anterior. Para evitar que o mês
+    # antigo persista, usamos getData() diretamente via JS com ano e mês corretos,
+    # e verificamos em seguida se o widget realmente mudou.
+    mes_idx = int(mes_data_value) - 1  # 0-indexed: Janeiro=0, Agosto=7
     nome_mes = MESES_PT[mes_idx]
 
     try:
         btn_cal = page.locator("#monthlySupplierContract").first
         if await btn_cal.count():
-            log_callback(f"Abrindo calendário superior (#monthlySupplierContract)...")
-            await btn_cal.click()
-            await asyncio.sleep(1)
+            # Lê o texto atual do botão (estado da sessão anterior)
+            texto_atual = (await btn_cal.inner_text()).strip()
+            log_callback(f"Calendário atual (sessão anterior): '{texto_atual}'")
 
-            # Seleciona o Ano no dropdown #calendarYear
-            ano_select = page.locator(".monthly-wrp0 #calendarYear, #calendarYear").first
-            if await ano_select.count():
-                await ano_select.select_option(str(ano_alvo))
-                await asyncio.sleep(0.5)
+            # Usa chamada JS direta a getData() com ano e mês corretos
+            # Isso evita a sequência click → select_option → click_mes que pode
+            # ser interrompida pelo auto-refresh do portal ao trocar o ano
+            log_callback(f"Selecionando mês via JS: getData({mes_idx}, {ano_alvo}, ...)")
+            await page.evaluate(
+                "([m, a]) => getData(m, parseInt(a), monthlySupplierContract)",
+                [mes_idx, ano_alvo]
+            )
 
-            # Clica no botão do Mês com data-value correspondente (0-11)
-            seletor_mes_btn = f'.monthly-wrp0 button[data-value="{mes_idx}"], button[onclick*="getData({mes_idx}"]'
-            btn_mes = page.locator(seletor_mes_btn).first
-
-            if await btn_mes.count():
-                log_callback(f"Clicando no botão do mês '{nome_mes}' (data-value={mes_idx})...")
-                await btn_mes.click()
-            else:
-                log_callback(f"Disparando função de busca do mês '{nome_mes}' via JavaScript...")
-                await page.evaluate("([m, a]) => getData(m, parseInt(a), monthlySupplierContract)", [mes_idx, ano_alvo])
-
+            # Aguarda a tabela processar
             await asyncio.sleep(2)
             try:
                 await page.wait_for_selector(f"#{TABELA_CONTRATOS}_processing", state="hidden", timeout=60000)
             except Exception:
                 pass
+
+            # Verificação: confirma que o botão reflete o mês/ano esperados
+            texto_novo = (await btn_cal.inner_text()).strip()
+            esperado_mes = nome_mes
+            if esperado_mes.lower() in texto_novo.lower() and str(ano_alvo) in texto_novo:
+                log_callback(f"Calendário confirmado: '{texto_novo}'")
+            else:
+                log_callback(f"Aviso: Calendário mostra '{texto_novo}', esperado '{nome_mes} {ano_alvo}'. Tentando novamente...")
+                # Tentativa 2: abre o picker e clica no botão do mês manualmente
+                await btn_cal.click()
+                await asyncio.sleep(1)
+                ano_select = page.locator("#calendarYear").first
+                if await ano_select.count():
+                    await ano_select.select_option(str(ano_alvo))
+                    await asyncio.sleep(0.5)
+                btn_mes = page.locator(f'button[data-value="{mes_idx}"]').first
+                if await btn_mes.count() and await btn_mes.is_visible():
+                    await btn_mes.click()
+                    await asyncio.sleep(2)
+                    try:
+                        await page.wait_for_selector(f"#{TABELA_CONTRATOS}_processing", state="hidden", timeout=30000)
+                    except Exception:
+                        pass
+                    texto_final = (await btn_cal.inner_text()).strip()
+                    log_callback(f"Calendário após retry: '{texto_final}'")
     except Exception as e:
         log_callback(f"Aviso ao interagir com calendário superior: {e}")
 
     # 2. Filtros de Coluna da Tabela
-    await page.click(BOTAO_FILTROS)
+    # Garante que o painel de filtros está aberto
+    try:
+        filtros_visiveis = await page.locator(FILTRO_MES).first.is_visible()
+        if not filtros_visiveis:
+            await page.click(BOTAO_FILTROS)
+            await asyncio.sleep(0.5)
+    except Exception:
+        await page.click(BOTAO_FILTROS)
+        await asyncio.sleep(0.5)
 
     mes_locator = page.locator(FILTRO_MES).first
     ano_locator = page.locator(FILTRO_ANO).first
     contrato_locator = page.locator(FILTRO_CONTRATO).first
+    campo_arquivo = page.locator(FILTRO_ARQUIVO).first
+
+    # Limpa todos os campos antes de preencher (evita resíduo da execução anterior)
+    for loc in [mes_locator, ano_locator, contrato_locator, campo_arquivo]:
+        try:
+            if await loc.count():
+                await loc.fill("")
+        except Exception:
+            pass
 
     if await mes_locator.count():
         await mes_locator.fill(mes_data_value)
@@ -122,9 +205,7 @@ async def preparar_contexto(page, ano_alvo: str, mes_data_value: str, contrato_a
         await ano_locator.fill(ano_alvo)
     if contrato_alvo and await contrato_locator.count():
         await contrato_locator.fill(contrato_alvo)
-
-    # Deixamos o filtro de arquivo em branco para trazer todos os itens
-    campo_arquivo = page.locator(FILTRO_ARQUIVO).first
+    # Filtro de arquivo fica vazio para trazer todos
     if await campo_arquivo.count():
         await campo_arquivo.fill("")
 
@@ -298,14 +379,14 @@ async def fechar_modal_documento(page) -> None:
         pass
 
 
-async def baixar_todos_arquivos_unicos(page, ano_alvo: str, mes_data_value: str, log_callback) -> None:
+async def baixar_todos_arquivos_unicos(page, pasta_base: str, ano_alvo: str, mes_data_value: str, nome_mes_pasta: str, log_callback, abort_event=None) -> None:
     # 1. Carrega todos os registros (-1)
     await carregar_todos_os_registros(page, log_callback)
 
-    # 2. Prepara a pasta padronizada para salvar prestação de contas CSV
-    mes_2_digitos_padrao = str(mes_data_value).zfill(2)
-    pasta_destino_padrao = os.path.join(BASE_DOWNLOADS_GERAL, ano_alvo, mes_2_digitos_padrao)
+    # 2. Resolve a pasta do mês no padrão 'XX. Mês Ano' (ex: '08. Agosto 2026')
+    pasta_destino_padrao = obter_pasta_mes(pasta_base, ano_alvo, mes_data_value, nome_mes_pasta)
     os.makedirs(pasta_destino_padrao, exist_ok=True)
+    log_callback(f"📁 Pasta de destino para o período: '{pasta_destino_padrao}'")
 
     # 3. Tenta exportar o CSV nativo (para auditoria)
     await tentar_exportar_csv_nativo(page, pasta_destino_padrao, log_callback)
@@ -338,7 +419,8 @@ async def baixar_todos_arquivos_unicos(page, ano_alvo: str, mes_data_value: str,
 
     log_callback(f"\n📊 Total de links encontrados na tabela: {total_links_dom}")
 
-    # 6. Processa cada item, montando a estrutura de pastas e nome: Nome (Serviço).pdf
+    # 6. Processa cada item criando uma pasta para o fornecedor com a nomenclatura adotada: Nome (Serviço)
+    # e preservando o nome original do arquivo (OS_264_...pdf)
     vistos = set()
     itens_unicos = []
 
@@ -348,7 +430,7 @@ async def baixar_todos_arquivos_unicos(page, ano_alvo: str, mes_data_value: str,
 
         link = links[idx]
 
-        # Sanitização rígida de ano e mês para garantir formato 2025/07
+        # Sanitização de ano e mês
         raw_ano = re.sub(r'\D', '', str(item.get("ano", "")))
         ano_item = raw_ano if len(raw_ano) == 4 else ano_alvo
 
@@ -364,18 +446,22 @@ async def baixar_todos_arquivos_unicos(page, ano_alvo: str, mes_data_value: str,
         servico_limpo = sanitizar_nome(servico_bruto)
 
         if nome_limpo and servico_limpo:
-            nome_composto = f"{nome_limpo} ({servico_limpo})"
+            nome_pasta_fornecedor = f"{nome_limpo} ({servico_limpo})"
         elif nome_limpo:
-            nome_composto = nome_limpo
+            nome_pasta_fornecedor = nome_limpo
         elif servico_limpo:
-            nome_composto = servico_limpo
+            nome_pasta_fornecedor = servico_limpo
         else:
-            nome_composto = sanitizar_nome(texto_link) or f"documento_{idx+1}"
+            nome_pasta_fornecedor = sanitizar_nome(texto_link) or f"documento_{idx+1}"
 
-        nome_pdf = f"{nome_composto}.pdf"
-        chave_unica = f"{ano_item}_{mes_2d}_{nome_composto.lower()}"
+        nome_arquivo_original = sanitizar_nome_arquivo_original(texto_link, fallback=f"documento_{idx+1}.pdf")
 
-        pasta_destino = os.path.join(BASE_DOWNLOADS_GERAL, str(ano_item), mes_2d)
+        # Define a pasta do fornecedor dentro da pasta do mês
+        pasta_fornecedor = os.path.join(pasta_destino_padrao, nome_pasta_fornecedor)
+
+        # Desduplica por (pasta_fornecedor, nome_arquivo_original)
+        # Permitindo que múltiplos documentos distintos do mesmo fornecedor sejam baixados para a mesma pasta
+        chave_unica = (pasta_fornecedor.lower(), nome_arquivo_original.lower())
 
         if chave_unica not in vistos:
             vistos.add(chave_unica)
@@ -386,8 +472,9 @@ async def baixar_todos_arquivos_unicos(page, ano_alvo: str, mes_data_value: str,
                 "mes": mes_2d,
                 "nome": nome_bruto,
                 "servico": servico_bruto,
-                "nome_pdf": nome_pdf,
-                "pasta_destino": pasta_destino
+                "pasta_fornecedor_nome": nome_pasta_fornecedor,
+                "pasta_destino": pasta_fornecedor,
+                "nome_arquivo_original": nome_arquivo_original
             })
 
     total_unicos = len(itens_unicos)
@@ -397,31 +484,43 @@ async def baixar_todos_arquivos_unicos(page, ano_alvo: str, mes_data_value: str,
     path_csv_unicos = os.path.join(pasta_destino_padrao, "lista_arquivos_unicos.csv")
     with open(path_csv_unicos, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f, delimiter=";")
-        writer.writerow(["Index", "Ano", "Mes", "Nome_Empresa", "Servico", "Nome_Arquivo_PDF"])
+        writer.writerow(["Index", "Ano", "Mes", "Nome_Empresa", "Servico", "Pasta_Fornecedor", "Nome_Arquivo_Original"])
         for u in itens_unicos:
-            writer.writerow([u["index"], u["ano"], u["mes"], u["nome"], u["servico"], u["nome_pdf"]])
+            writer.writerow([
+                u["index"],
+                u["ano"],
+                u["mes"],
+                u["nome"],
+                u["servico"],
+                u["pasta_fornecedor_nome"],
+                u["nome_arquivo_original"]
+            ])
 
     log_callback(f"📄 Relação de arquivos únicos salva em '{path_csv_unicos}'.\n")
 
     # 8. Download Sequencial dos Arquivos Únicos
-    # Subpasta única por execução no temp para evitar colisões entre execuções
     temp_run_dir = os.path.join(CAMINHO_TEMPORARIO, uuid.uuid4().hex)
     os.makedirs(temp_run_dir, exist_ok=True)
 
     for idx, u in enumerate(itens_unicos, 1):
-        nome_pdf = u["nome_pdf"]
-        link = u["link"]
+        # Verifica abortar antes de cada download
+        if abort_event is not None and abort_event.is_set():
+            log_callback(f"\n⛔ Execução abortada pelo usuário após {idx - 1}/{total_unicos} arquivos.")
+            return
+
+        nome_arquivo = u["nome_arquivo_original"]
         pasta = u["pasta_destino"]
+        link = u["link"]
         os.makedirs(pasta, exist_ok=True)
 
-        caminho_final_arquivo = os.path.join(pasta, nome_pdf)
+        caminho_final_arquivo = os.path.join(pasta, nome_arquivo)
 
-        # Pula se o arquivo já existir no disco e possuir conteúdo (> 0 bytes)
+        # Pula se o arquivo já existir na pasta com conteúdo (> 0 bytes)
         if os.path.exists(caminho_final_arquivo) and os.path.getsize(caminho_final_arquivo) > 0:
-            log_callback(f"[{idx}/{total_unicos}] ⏭ Pulo: {nome_pdf[:50]} (Já existe em {u['ano']}/{u['mes']})")
+            log_callback(f"[{idx}/{total_unicos}] ⏭ Pulo: {u['pasta_fornecedor_nome'][:35]} / {nome_arquivo[:30]} (Já existe)")
         else:
             try:
-                log_callback(f"[{idx}/{total_unicos}] ⬇️ Baixando: {nome_pdf[:50]} -> {u['ano']}/{u['mes']}")
+                log_callback(f"[{idx}/{total_unicos}] ⬇️ Baixando: {u['pasta_fornecedor_nome'][:35]} -> {nome_arquivo[:30]}")
 
                 try:
                     await link.click(force=True, timeout=10000)
@@ -436,7 +535,7 @@ async def baixar_todos_arquivos_unicos(page, ano_alvo: str, mes_data_value: str,
                 if not pdf_src:
                     raise RuntimeError("Link src vazio no iframe do documento.")
 
-                path_local = os.path.join(temp_run_dir, nome_pdf)
+                path_local = os.path.join(temp_run_dir, nome_arquivo)
 
                 async with page.expect_download(timeout=60000) as dl_info:
                     await page.evaluate("""async ([url, filename]) => {
@@ -448,16 +547,16 @@ async def baixar_todos_arquivos_unicos(page, ano_alvo: str, mes_data_value: str,
                         document.body.appendChild(a);
                         a.click();
                         a.remove();
-                    }""", [pdf_src, nome_pdf])
+                    }""", [pdf_src, nome_arquivo])
 
                 download = await dl_info.value
                 await download.save_as(path_local)
 
                 shutil.move(path_local, caminho_final_arquivo)
-                log_callback(f"[{idx}/{total_unicos}] ✅ Baixado: {nome_pdf[:50]}")
+                log_callback(f"[{idx}/{total_unicos}] ✅ Salvo: {u['pasta_fornecedor_nome'][:30]} / {nome_arquivo[:30]}")
 
             except Exception as e:
-                log_callback(f"[{idx}/{total_unicos}] ❌ Erro ao baixar {nome_pdf[:30]}: {e}")
+                log_callback(f"[{idx}/{total_unicos}] ❌ Erro ao baixar {nome_arquivo[:30]}: {e}")
             finally:
                 # Garante que o modal de visualização do documento seja SEMPRE fechado
                 await fechar_modal_documento(page)
@@ -478,12 +577,29 @@ def obter_caminho_session() -> str:
     return "session_osinfo.json"
 
 
-async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: str, contrato_alvo: str, log_callback, headless: bool = True):
+async def automate_osinfo(
+    ano_alvo: str,
+    mes_data_value: str,
+    nome_mes_pasta: str,
+    contrato_alvo: str,
+    log_callback,
+    pasta_base: str = PASTA_OFICIAL_PADRAO,
+    headless: bool = True,
+    abort_event=None,
+):
+    """Executa o robô OSINFO. Caso abort_event (threading.Event) seja sinalizado, encerra a execução."""
+
+    def checar_abort():
+        if abort_event is not None and abort_event.is_set():
+            raise InterruptedError("Execução abortada pelo usuário.")
+
     # Limpa o diretório temporário antes de cada execução para evitar
     # que arquivos de execuções anteriores causem movimentação errada
     if os.path.exists(CAMINHO_TEMPORARIO):
         shutil.rmtree(CAMINHO_TEMPORARIO, ignore_errors=True)
     os.makedirs(CAMINHO_TEMPORARIO, exist_ok=True)
+
+    checar_abort()
 
     log_callback("Verificando motor do navegador (Playwright)...")
     try:
@@ -508,6 +624,8 @@ async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: st
     except Exception as e:
         log_callback(f"Aviso: Houve uma falha ao verificar/instalar o motor: {e}")
 
+    checar_abort()
+
     async with async_playwright() as p:
         modo_txt = "oculto (headless)" if headless else "visível (janela aberta)"
         log_callback(f"Iniciando navegador em modo {modo_txt}...")
@@ -517,7 +635,7 @@ async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: st
             "accept_downloads": True,
             "viewport": {"width": 1280, "height": 720},
         }
-        
+
         session_path = obter_caminho_session()
         if os.path.exists(session_path):
             ctx_args["storage_state"] = session_path
@@ -529,8 +647,16 @@ async def automate_osinfo(ano_alvo: str, mes_data_value: str, nome_mes_pasta: st
         page = await context.new_page()
         page.set_default_timeout(120000)
 
-        await preparar_contexto(page, ano_alvo, mes_data_value, contrato_alvo, log_callback)
+        try:
+            checar_abort()
+            await preparar_contexto(page, ano_alvo, mes_data_value, contrato_alvo, log_callback)
+            checar_abort()
+            await baixar_todos_arquivos_unicos(
+                page, pasta_base, ano_alvo, mes_data_value, nome_mes_pasta, log_callback,
+                abort_event=abort_event
+            )
+        except InterruptedError as e:
+            log_callback(f"\n⛔ {e}")
+        finally:
+            await browser.close()
 
-        await baixar_todos_arquivos_unicos(page, ano_alvo, mes_data_value, log_callback)
-
-        await browser.close()
