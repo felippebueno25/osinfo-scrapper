@@ -302,7 +302,7 @@ async def automate_osinfo():
     os.makedirs(CAMINHO_TEMPORARIO, exist_ok=True)
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
+        browser = await p.chromium.launch(headless=True)
 
         ctx_args = {
             "accept_downloads": True,

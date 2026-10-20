@@ -1,5 +1,7 @@
 import asyncio
 import os
+import sys
+import tempfile
 import shutil
 import json
 from datetime import datetime
@@ -14,12 +16,15 @@ SEU_USUARIO = os.getenv("SEU_USUARIO", "")
 SUA_SENHA = os.getenv("SUA_SENHA", "")
 CONTRATO_ALVO = "002/2021-52"
 
-SESSION_FILE = "session_osinfo.json"
-CHECKPOINT_FILE = "checkpoint.json"
+# Pasta base: ao lado do .exe (quando empacotado) ou do script
+BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+
+SESSION_FILE = os.path.join(BASE_DIR, "session_osinfo.json")
+CHECKPOINT_FILE = os.path.join(BASE_DIR, "checkpoint.json")
 
 # Organização de Pastas
-BASE_Z = r"C:\Users\CAP52\Downloads\codigo\sei-scrapper\osinfo-scrapper\OSINFO_DESPESAS_DOWNLOADS"
-CAMINHO_TEMPORARIO = r"C:\temp_osinfo_stage"
+BASE_Z = os.path.join(BASE_DIR, "OSINFO_DESPESAS_DOWNLOADS")
+CAMINHO_TEMPORARIO = os.path.join(tempfile.gettempdir(), "temp_osinfo_stage")
 
 console = Console()
 
@@ -81,7 +86,7 @@ async def automate_osinfo():
     checkpoint = carregar_checkpoint(ano_alvo, mes_data_value, rubrica_filtro)
     
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
+        browser = await p.chromium.launch(headless=True)
         
         ctx_args = {
             "accept_downloads": True,
@@ -222,4 +227,8 @@ async def automate_osinfo():
         await browser.close()
 
 if __name__ == "__main__":
-    asyncio.run(automate_osinfo())
+    try:
+        asyncio.run(automate_osinfo())
+    except Exception as e:
+        console.print(f"[bold red]Erro: {e}[/bold red]")
+    input("\nPressione Enter para fechar...")
