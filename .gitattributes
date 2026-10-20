@@ -1,2 +1,19 @@
-# Auto detect text files and perform LF normalization
+# Normalização automática de fim de linha
 * text=auto
+
+# Arquivos sempre em LF
+*.py text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.spec text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Windows
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binários
+*.exe binary
+*.pyc binary

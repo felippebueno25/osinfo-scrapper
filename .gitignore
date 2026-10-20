@@ -1,21 +1,40 @@
-# Downloads e saídas de automação
+# --- Segredos e sessões (nunca versionar) ---
+.env
+**/.env
+!.env.example
+!**/.env.example
+session_osinfo.json
+**/session_osinfo.json
+
+# --- Estado local da automação ---
+checkpoint.json
+
+# --- Downloads e saídas da automação ---
 OSINFO_DESPESAS_DOWNLOADS/
 OSINFO_DOWNLOADS_GERAL/
 OSINFO_CONTRATOS_TERCEIROS_DOWNLOADS/
+*.csv
+*.log
 
-# Dados de sessão e credenciais sensíveis
-session_osinfo.json
-**/session_osinfo.json
-.env
-**/.env
-checkpoint.json
-
-# Ambiente Virtual Python e compilação do PyInstaller
+# --- Python ---
 .venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Build do PyInstaller / executáveis ---
 build/
 dist/
-**/build/
-**/dist/
-__pycache__/
-**/__pycache__/
-*.pyc
+exe_build/
+exe_dist/
+*.exe
+
+# --- IDE / SO ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
